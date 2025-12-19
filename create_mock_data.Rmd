@@ -1,0 +1,351 @@
+---
+  title: "create mock data for Sonata"
+author: "KM"
+date: "2025-12-19"
+output: html_document
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+# devtools::install_github("gkrajewski/Multilada", ref = "cdi_corrections_improvements")
+library(Multilada)
+library(tidyverse)
+library(mgcv) # for GAMs
+library(knitr)
+library(lubridate)
+```
+
+# Data
+
+Data from:
+  1. (Parents of) Children recruited via preschools (`ws-gram-p2-pl`)
+2. (Parents of) Children recruited via CAT validation (`ws-gram-p2-pl`)
+
+```{r data}
+#ids
+read_csv("WSgrampilotaz_20251107.csv") %>%
+  mutate(id = as.character(`_id`)) %>%
+  select(id, preschool) %>%
+  mutate("source" = "gram_pilot2") -> ids_pilot
+
+read_csv("CAT Validation Tracker SONATA - from_r.csv") %>%
+  filter(!is.na(ws_a)) %>%
+  select(id, CDI_type) %>%
+  rename("first_cdi" = "CDI_type") %>%
+  mutate("source" = "cat_validation") -> ids_cat_validation
+
+bind_rows(ids_pilot, ids_cat_validation) -> ids
+
+#cdi
+#cdi_forms("cdi")
+cdi_read("cdi", "ws-gram-p2_pl") -> ws_gram_p2
+cdi_read("cdi", "ws-a_pl") -> ws_a_pl
+bind_rows(ws_gram_p2, ws_a_pl) -> cdi_ws_gram
+
+#join ids and cdi
+ids %>% left_join(cdi_ws_gram) -> data
+```
+
+# Explore
+
+Number of particpants and if they completed CDI:
+```{r participants}
+data %>% mutate(completed_cdi = if_else(is.na(end_date),"no","yes")) %>% 
+  group_by(completed_cdi) %>%
+  summarise(number_of_children = n_distinct(id))
+```
+
+Number of participanst per study:
+```{r}
+data %>% group_by(source) %>% summarise(number_of_children = n_distinct(id))
+```
+
+# Scoring
+
+```{r items}
+items <- read_csv2("items.csv")
+```
+
+Poza tu i teraz:
+  *not working*
+```{r}
+deixis <- cdi_itemise_radio(data, "deixis", items)
+```
+
+Odmiana-Formy:
+  There should be 14 rows per child.
+```{r inflection}
+cdi_itemise_oneCheckboxGroup(data, "inflection", items) %>%
+  filter(category == "noun_form" |
+           category == "adjective_adverb") -> inflection_forms
+
+#check number of rows per id
+inflection_forms %>% group_by(id) %>% summarise(n = n()) %>%
+  summarise(min(n), max(n)) #14
+```
+
+Konteksty:
+  There should be 9 rows per child.
+```{r noun-context}
+cdi_itemise_radio(data, "inflection", items) %>%
+  filter(category == "noun_context") -> noun_context
+#check number of rows per id
+noun_context %>% group_by(id) %>% summarise(n = n()) %>%
+  summarise(min(n), max(n)) #9
+```
+
+Czas-odmiana:
+  There should be 3 rows per child.
+```{r verb-tense}
+cdi_itemise_radio(data, "inflection", items) %>%
+  filter(category == "verb_tense") -> verb_tense
+#check number of rows per id
+verb_tense %>% group_by(id) %>% summarise(n = n()) %>%
+  summarise(min(n), max(n)) #3
+```
+
+Czas-osoby:
+  There should be 6 rows per child.
+```{r verb-person}
+cdi_itemise_radio(data, "inflection", items) %>%
+  filter(category == "verb_person") -> verb_person
+#check number of rows per id
+verb_person %>% group_by(id) %>% summarise(n = n()) %>%
+  summarise(min(n), max(n)) #6
+```
+
+```{r}
+# create submissions
+cdi_submissions(cdi_ws_gram) -> submissions
+
+# add age (in months)
+submissions$age <- age_months(submissions$birth_date, submissions$end_date)
+
+# create vocab scores
+cdi_scores <- cdi_count_oneCheckboxGroup(cdi_ws_gram, "word")
+cdi_scores <- cdi_scores %>% rename(vocab_score = n)
+# add vocab scores to cdi_scores
+cdi_scores <- submissions %>% select(id, age) %>% left_join(cdi_scores)
+
+# create grammar scores
+# creating a complexity score made of
+# alternatives_simple_1 _2 and _3
+
+categories <- c(
+  "alternatives_simple_1",
+  "alternatives_simple_2",
+  "alternatives_simple_3",
+  "alternatives_complex"
+)
+
+alternatives <- lapply(categories, function(cat) {
+  cdi_count_checkboxAlt(
+    cdi_ws_gram,
+    type = "sentences",
+    category = cat
+  ) %>%
+    select(id, n) %>%
+    rename(!!cat := n)   # rename score column
+})
+
+alternatives <- Reduce(
+  function(x, y) left_join(x, y, by = "id"),
+  alternatives)
+
+alternatives$alternatives <- rowSums(
+  select(alternatives, 
+         starts_with("alternatives_")), na.rm = TRUE)
+
+# add vocab scores to cdi_scores
+cdi_scores <- alternatives %>% select(id, alternatives) %>% left_join(cdi_scores)
+
+# remove kids with 0 in vocab and alternatives scores
+cdi_scores <- cdi_scores %>% filter(!(vocab_score == 0 & alternatives == 0))
+# small clean
+cdi_scores <- cdi_scores %>% select(id, age, vocab_score, alternatives)
+
+```
+
+```{r}
+# create mock data mock_n50
+A_T1 <- cdi_scores %>% filter(age >= 17, age <= 20)
+A_T2 <- cdi_scores %>% filter(age >= 23, age <= 26)
+A_T3 <- cdi_scores %>% filter(age >= 34, age <= 39)
+
+# define ceilings based on real data
+max_vocab <- max(cdi_scores$vocab_score, na.rm = TRUE)
+max_alt   <- max(cdi_scores$alternatives, na.rm = TRUE)
+
+# use the real values to create T1
+set.seed(123)
+n_participants <- 50
+mock_ids <- tibble(
+  id = 1:n_participants
+)
+
+T1 <- mock_ids %>%
+  mutate(
+    timepoint = "T1",
+    age = sample(17:20, n(), replace = TRUE),
+    vocab_score = sample(A_T1$vocab_score, n(), replace = TRUE),
+    alternatives = sample(A_T1$alternatives, n(), replace = TRUE)
+  )
+
+# simulate T2 and T3 
+# create a simulating function
+simulate_next_tp <- function(prev_df,
+                             real_data,
+                             time_label,
+                             age_range,
+                             max_vocab,
+                             max_alt,
+                             noise_sd_vocab = 5,
+                             noise_sd_alt = 2) {
+  
+  n <- nrow(prev_df)
+  
+  # -------------------------------------------------
+  # C. Probability of using real cross-sectional data
+  #    (increases as participant approaches ceiling)
+  # -------------------------------------------------
+  p_real_vocab <- plogis((prev_df$vocab_score - 0.6 * max_vocab) / 40)
+  p_real_alt   <- plogis((prev_df$alternatives - 0.6 * max_alt) / 5)
+  
+  p_real <- pmax(
+    0.2,  # <-- baseline probability (CRITICAL)
+    p_real_vocab,
+    p_real_alt
+  )
+  
+  use_real <- runif(n) < p_real
+  
+  # Sample from real cross-sectional distributions
+  top_vocab <- real_data$vocab_score[
+    real_data$vocab_score >= 0.9 * max_vocab
+  ]
+  
+  real_vocab <- if (length(top_vocab) > 0) {
+    ifelse(
+      runif(n) < 0.4,
+      sample(top_vocab, n, replace = TRUE),
+      sample(real_data$vocab_score, n, replace = TRUE)
+    )
+  } else {
+    # fallback: no ceiling values in this age band
+    sample(real_data$vocab_score, n, replace = TRUE)
+  }
+  real_alt   <- sample(real_data$alternatives, n, replace = TRUE)
+  
+  # -------------------------------------------------
+  # A. Ceiling-aware simulated growth
+  # -------------------------------------------------
+  growth_vocab_mean <- 20 * (1 - prev_df$vocab_score / max_vocab)
+  growth_vocab_mean <- pmax(growth_vocab_mean, 2)
+  
+  sim_vocab <- round(
+    prev_df$vocab_score +
+      rnorm(n, mean = growth_vocab_mean, sd = noise_sd_vocab)
+  )
+  
+  growth_alt_mean <- 2 * (1 - prev_df$alternatives / max_alt)
+  growth_alt_mean <- pmax(growth_alt_mean, 0.3)
+  
+  sim_alt <- round(
+    prev_df$alternatives +
+      rnorm(n, mean = growth_alt_mean, sd = noise_sd_alt)
+  )
+  
+  # -------------------------------------------------
+  # B. Assemble output + monotonicity + bounds
+  # -------------------------------------------------
+  tibble(
+    id = prev_df$id,
+    timepoint = time_label,
+    age = sample(age_range, n, replace = TRUE),
+    vocab_score = ifelse(use_real, real_vocab, sim_vocab),
+    alternatives = ifelse(use_real, real_alt, sim_alt),
+    source = ifelse(use_real, "cross_sectional", "simulated")
+  ) %>%
+    mutate(
+      vocab_score = round(pmin(pmax(vocab_score, prev_df$vocab_score), max_vocab)),
+      alternatives = round(pmin(pmax(alternatives, prev_df$alternatives), max_alt))
+    )
+}
+
+T2 <- simulate_next_tp(
+  prev_df = T1,
+  real_data = A_T2,
+  time_label = "T2",
+  age_range = 23:26,
+  max_vocab = max_vocab,
+  max_alt = max_alt
+)
+
+T3 <- simulate_next_tp(
+  prev_df = T2,
+  real_data = A_T3,
+  time_label = "T3",
+  age_range = 36:39,
+  max_vocab = max_vocab,
+  max_alt = max_alt
+)
+
+
+mock_n50 <- bind_rows(T1, T2, T3) %>%
+  arrange(id, timepoint)
+
+```
+
+
+```{r}
+# create mock data mock_n100
+
+# use the real values to create T1
+set.seed(123)
+n_participants <- 100
+mock_ids <- tibble(
+  id = 1:n_participants
+)
+
+T1 <- mock_ids %>%
+  mutate(
+    timepoint = "T1",
+    age = sample(17:20, n(), replace = TRUE),
+    vocab_score = sample(A_T1$vocab_score, n(), replace = TRUE),
+    alternatives = sample(A_T1$alternatives, n(), replace = TRUE)
+  )
+
+# simulate T2 and T3 
+# create a simulating function
+
+T2 <- simulate_next_tp(
+  prev_df = T1,
+  real_data = A_T2,
+  time_label = "T2",
+  age_range = 23:26,
+  max_vocab = max_vocab,
+  max_alt = max_alt
+)
+
+T3 <- simulate_next_tp(
+  prev_df = T2,
+  real_data = A_T3,
+  time_label = "T3",
+  age_range = 36:39,
+  max_vocab = max_vocab,
+  max_alt = max_alt
+)
+
+
+mock_n100 <- bind_rows(T1, T2, T3) %>%
+  arrange(id, timepoint)
+
+```
+
+```{r}
+write_csv2(mock_n50, "mock_n50.csv")
+write_csv2(mock_n100, "mock_n100.csv")
+```
+
+
