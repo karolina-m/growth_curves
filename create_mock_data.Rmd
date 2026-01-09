@@ -46,21 +46,8 @@ bind_rows(ws_gram_p2, ws_a_pl) -> cdi_ws_gram
 ids %>% left_join(cdi_ws_gram) -> data
 ```
 
-# Explore
-
-Number of particpants and if they completed CDI:
-```{r participants}
-data %>% mutate(completed_cdi = if_else(is.na(end_date),"no","yes")) %>% 
-  group_by(completed_cdi) %>%
-  summarise(number_of_children = n_distinct(id))
-```
-
-Number of participants per study:
-```{r}
-data %>% group_by(source) %>% summarise(number_of_children = n_distinct(id))
-```
-
-# Scoring
+# Vocabulary - subscales (e.g. action words (verbs), connecting words, etc.)
+For now, we have the two: action words (verbs) - with a range 0-123 and connecting words (range 0-9). I thought these two are good for starters, having two completely different ranges.
 
 ```{r}
 # vocabulary subscales
@@ -73,27 +60,25 @@ connecting_words <- connecting_words %>% rename(connecting_words = n) %>% select
 ```
 
 
-
 ```{r items}
 items <- read_csv2("items.csv")
 ```
 
-Poza tu i teraz:
-```{r}
-deixis <- cdi_itemise_radio(data, "deixis", items)
-```
+# Grammar
 
 Inflection -- form:
+noun_form - child's score on inflection of nouns by cases, range 0-10
+noun_context - also measuring inflection of nouns by cases, but in a different way: by producing a full sentence (with context) and asking parent whether child says sth like that; range 0 - 9
+for individual grammar items, see here:
+https://docs.google.com/spreadsheets/d/1HODD1g8RqkIUMzp3elGEkq_JQN5sxmW-2r2eoaweMBc/edit?gid=0#gid=0
+
+To run a CDI:WS in Polish (test run), go here: https://apps.multilada.pl/cdi/?form=ws-gram-p2&lang=pl&id=test100 
+(with every new test run, change the id e.g. from test100  to test101)
 ```{r inflection}
 # response format: yes/no (0/1) --> we'll take sum of 1s per kid
 cdi_itemise_oneCheckboxGroup(cdi_ws_gram, "inflection", items) %>%
   filter(category == "noun_form" |
            category == "adjective_adverb") -> form
-
-
-#check number of rows per id
-form %>% group_by(id) %>% summarise(n = n()) %>%
-  summarise(min(n), max(n)) #14
 
 gram_categories <- form %>% group_by(id, category) %>% summarize(n = n())
 gram_categories <- gram_categories %>% pivot_wider(id_cols = id, names_from = category, values_from = n)
@@ -120,13 +105,9 @@ noun_context %>%full_join(gram_categories) -> gram_categories
 ```
 
 Inflection -- verb tense:
-  There should be 3 rows per child.
 ```{r verb-tense}
 cdi_itemise_radio(cdi_ws_gram, "inflection", items) %>%
   filter(category == "verb_tense") -> verb_tense
-#check number of rows per id
-verb_tense %>% group_by(id) %>% summarise(n = n()) %>%
-  summarise(min(n), max(n)) #3
 
 verb_tense <- verb_tense %>% mutate(
   score = case_when(answer == 1 ~ 0,
@@ -139,13 +120,9 @@ verb_tense %>%full_join(gram_categories) -> gram_categories
 ```
 
 Inflection -- verb person:
-  There should be 6 rows per child.
 ```{r verb-person}
 cdi_itemise_radio(cdi_ws_gram, "inflection", items) %>%
   filter(category == "verb_person") -> verb_person
-#check number of rows per id
-verb_person %>% group_by(id) %>% summarise(n = n()) %>%
-  summarise(min(n), max(n)) #6
 
 verb_person <- verb_person %>% mutate(
   score = case_when(answer == 1 ~ 0,
@@ -188,10 +165,16 @@ cdi_scores <- cdi_scores %>% rename(vocab_score = n)
 cdi_scores <- submissions %>% select(id, age) %>% left_join(cdi_scores)
 cdi_scores <- cdi_scores %>% select(id, age, vocab_score)
 
+# add connecting words and action_words to cdi_scores
+connecting_words %>% full_join(cdi_scores) -> cdi_scores
+action_words %>% full_join(cdi_scores) -> cdi_scores
+
+# add gram scores to cdi_scores
 gram_categories %>%full_join(cdi_scores) -> cdi_scores
 ```
 
 ```{r}
+# filter out some tests
 cdi_scores <- cdi_scores %>% filter(!(id == "77738317-gram-p2" | id == "730052942-gram-p2"))
 
 ```
@@ -255,6 +238,8 @@ max_nouns <- max(cdi_scores$nouns, na.rm = TRUE)
 max_noun_form <- max(cdi_scores$noun_form, na.rm = TRUE)
 max_noun_context <- max(cdi_scores$noun_context, na.rm = TRUE)
 max_adj <- max(cdi_scores$adjective_adverb, na.rm = TRUE)
+max_action_words <- max(cdi_scores$action_words, na.rm = TRUE)
+max_connecting_words <- max(cdi_scores$connecting_words, na.rm = TRUE)
 
 # use the real values to create T1
 set.seed(123)
@@ -275,7 +260,9 @@ T1 <- mock_ids %>%
     adjective_adverb = sample(A_T1$adjective_adverb, n(), replace = TRUE),
     noun_form = sample(A_T1$noun_form, n(), replace = TRUE),
     noun_context = sample(A_T1$noun_context, n(), replace = TRUE),
-    nouns = sample(A_T1$nouns, n(), replace = TRUE)
+    nouns = sample(A_T1$nouns, n(), replace = TRUE),
+    action_words = sample(A_T1$action_words, n(), replace = TRUE),
+    connecting_words = sample(A_T1$connecting_words, n(), replace = TRUE),
   )
 
 # simulate T2 and T3 
@@ -293,6 +280,8 @@ simulate_next_tp <- function(prev_df,
                              max_noun_form, 
                              max_noun_context, 
                              max_adj,
+                             max_action_words,
+                             max_connecting_words,
                              noise_sd_vocab = 5,
                              noise_sd_alt = 2,
                              noise_sd_other = 2) {
@@ -327,6 +316,8 @@ simulate_next_tp <- function(prev_df,
   real_noun_form   <- sample_ceiling_safe(real_data$noun_form, max_noun_form)
   real_noun_context<- sample_ceiling_safe(real_data$noun_context, max_noun_context)
   real_nouns       <- sample_ceiling_safe(real_data$nouns, max_nouns)
+  real_action_words <- sample_ceiling_safe(real_data$action_words, max_action_words)
+  real_connecting_words <- sample_ceiling_safe(real_data$connecting_words, max_connecting_words)
   
   # ---- simulated growth ----
   growth <- function(prev, max_val, base_mean = 2) {
@@ -344,6 +335,8 @@ simulate_next_tp <- function(prev_df,
   sim_noun_form   <- growth(prev_df$noun_form, max_noun_form)
   sim_noun_context<- growth(prev_df$noun_context, max_noun_context)
   sim_nouns       <- growth(prev_df$nouns, max_nouns)
+  sim_action_words <- growth(prev_df$action_words, max_action_words)
+  sim_connecting_words <- growth(prev_df$connecting_words, max_connecting_words)
   
   # ---- assemble output, choose real vs simulated, enforce bounds ----
   tibble(
@@ -359,6 +352,8 @@ simulate_next_tp <- function(prev_df,
     noun_form   = ifelse(use_real, real_noun_form, sim_noun_form),
     noun_context= ifelse(use_real, real_noun_context, sim_noun_context),
     nouns       = ifelse(use_real, real_nouns, sim_nouns),
+    action_words       = ifelse(use_real, real_action_words, sim_action_words),
+    connecting_words       = ifelse(use_real, real_connecting_words, sim_connecting_words),
     source = ifelse(use_real, "cross_sectional", "simulated")
   ) %>%
     mutate(
@@ -370,7 +365,9 @@ simulate_next_tp <- function(prev_df,
       adjective_adverb = pmin(pmax(adjective_adverb, prev_df$adjective_adverb), max_adj),
       noun_form   = pmin(pmax(noun_form, prev_df$noun_form), max_noun_form),
       noun_context= pmin(pmax(noun_context, prev_df$noun_context), max_noun_context),
-      nouns       = pmin(pmax(nouns, prev_df$nouns), max_nouns)
+      nouns       = pmin(pmax(nouns, prev_df$nouns), max_nouns),
+      action_words       = pmin(pmax(action_words, prev_df$action_words), max_action_words),
+      connecting_words       = pmin(pmax(connecting_words, prev_df$connecting_words), max_connecting_words)
     )
 }
 
@@ -387,7 +384,9 @@ T2 <- simulate_next_tp(
   max_nouns       = max_nouns,
   max_noun_form   = max_noun_form,
   max_noun_context= max_noun_context,
-  max_adj         = max_adj
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words
 )
 
 T3 <- simulate_next_tp(
@@ -403,7 +402,9 @@ T3 <- simulate_next_tp(
   max_nouns       = max_nouns,
   max_noun_form   = max_noun_form,
   max_noun_context= max_noun_context,
-  max_adj         = max_adj
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words
 )
 
 mock_n50 <- bind_rows(T1, T2, T3) %>%
@@ -411,9 +412,8 @@ mock_n50 <- bind_rows(T1, T2, T3) %>%
 
 ```
 
-
 ```{r}
-# mock_n100 dataset
+# create mock data mock_n100
 
 # use the real values to create T1
 set.seed(123)
@@ -434,10 +434,12 @@ T1 <- mock_ids %>%
     adjective_adverb = sample(A_T1$adjective_adverb, n(), replace = TRUE),
     noun_form = sample(A_T1$noun_form, n(), replace = TRUE),
     noun_context = sample(A_T1$noun_context, n(), replace = TRUE),
-    nouns = sample(A_T1$nouns, n(), replace = TRUE)
+    nouns = sample(A_T1$nouns, n(), replace = TRUE),
+    action_words = sample(A_T1$action_words, n(), replace = TRUE),
+    connecting_words = sample(A_T1$connecting_words, n(), replace = TRUE),
   )
 
-# simulate T2 and T3 
+
 T2 <- simulate_next_tp(
   prev_df = T1,
   real_data = A_T2,
@@ -451,7 +453,9 @@ T2 <- simulate_next_tp(
   max_nouns       = max_nouns,
   max_noun_form   = max_noun_form,
   max_noun_context= max_noun_context,
-  max_adj         = max_adj
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words
 )
 
 T3 <- simulate_next_tp(
@@ -467,15 +471,14 @@ T3 <- simulate_next_tp(
   max_nouns       = max_nouns,
   max_noun_form   = max_noun_form,
   max_noun_context= max_noun_context,
-  max_adj         = max_adj
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words
 )
 
 mock_n100 <- bind_rows(T1, T2, T3) %>%
   arrange(id, timepoint)
-
-
 ```
-
 
 ```{r}
 # export data

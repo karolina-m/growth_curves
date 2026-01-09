@@ -21,16 +21,17 @@ mock_n100 <- read_csv2("mock_n100.csv")
 
 # verb_person - child's score on inflection of verbs by persons, range: 0-6
 # verb_tense - child's score on inflection of verbs by tense, range: 0-3
-# verbs - because the two above have such narrow score ranges, KM created a verbs score: verb_person + verb_tense.
+# verbs - because the two above have such narrow score ranges, this is a summed verbs score: verb_person + verb_tense.
 
 # noun_form - child's score on inflection of nouns by cases, range 0-10
 # noun_context - also measuring inflection of nouns by cases, but in a different way: by producing a full sentence (with context) and asking parent whether child says sth like that; range 0 - 9
-# nouns - KM created a nouns score: noun_form + noun_context to mirror the approach for verbs; however, this may not have been the best idea, as the two measures essentially ask the same question.
+# nouns -  this is a summed nouns score: noun_form + noun_context to mirror the approach for verbs; however, this may not have been the best idea, as the two measures essentially ask the same question.
 
 # adjective_adverb - child's score on the inflection of adjectives and adverbs (comparison, e.g. tall, taller, tallest), range 0-4
 
 # vocabulary subscales:
-# - 
+# action words - how many verbs does the child know, range from 0 to 123
+# connceting words - how many connecting words does the child know, range from 0 to 9
 
 # for individual grammar items, see here:
 # https://docs.google.com/spreadsheets/d/1HODD1g8RqkIUMzp3elGEkq_JQN5sxmW-2r2eoaweMBc/edit?gid=0#gid=0
