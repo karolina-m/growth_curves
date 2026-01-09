@@ -41,3 +41,105 @@ mock_n100 <- read_csv2("mock_n100.csv")
 
 ```
 
+```{r}
+library(tidyverse)
+library(Rmisc)
+library(lme4)
+```
+
+```{r}
+# correct data structure:
+# timpoints and id should be factors
+mock_n50$id <- as.factor(mock_n50$id)
+mock_n50$timepoint <- as.factor(mock_n50$timepoint)
+
+mock_n100$id <- as.factor(mock_n100$id)
+mock_n100$timepoint <- as.factor(mock_n100$timepoint)
+```
+
+
+Exploring growth of vocab (overall) and grammar (overall).
+T1 ~ 18 mo, T2 ~ 24 mo, T3 ~ 30 mo.
+Vocab growth seems not that linear, it could be a mock artefact but it has been reported before.
+Note the wide CI error bars (my guess in real data the variability may be even greater).
+
+```{r}
+# vocab (overall)
+ggplot(summarySE(mock_n50, measurevar = "vocab_score", groupvars = "timepoint"), 
+       aes(x = timepoint, y = vocab_score, group = 1)) +
+  geom_errorbar(aes(ymin = vocab_score - ci, ymax = vocab_score + ci), width = 0.1) +
+  geom_point() +
+  geom_line() 
+
+# grammar (overall), i.e., alternatives
+ggplot(summarySE(mock_n50, measurevar = "alternatives", groupvars = "timepoint"), 
+       aes(x = timepoint, y = alternatives, group = 1)) +
+  geom_errorbar(aes(ymin = alternatives - ci, ymax = alternatives + ci), width = 0.1) +
+  geom_point() +
+  geom_line() 
+```
+```{r}
+# vocab growth - mixed linear reg
+# linear for now, but vocab growth may be NON-linear
+
+# only random intercept for child for start
+m0 <- lmer(vocab_score ~ 1 + (1|id), data = mock_n50)
+m1 <- lmer(vocab_score ~ timepoint + (1|id), data = mock_n50)
+m2 <- lmer(vocab_score ~ timepoint + alternatives + (1|id), data = mock_n50)
+
+anova(m0, m1, m2)
+AIC(m0, m1, m2)
+BIC(m0, m1, m2)
+
+summary(m2)
+# timepoints effect - yes - vocab increases between T1 and T3 (but not much between T1 and T2) - note non-linearity visible in plot above
+# grammar effect - yes - quite strong (t > 4)
+# random effects - yes - substantial variability between kids
+# moderate correlations between T2 and T3
+
+```
+
+```{r}
+# adding random slope for age (not possible for timepoint)
+# not enough data to estimate all random effects plus the residual variance
+m0 <- lmer(vocab_score ~ 1 + (1|id), data = mock_n50)
+m1 <- lmer(vocab_score ~ age + (age | id), data = mock_n50) # failed to converge
+m2 <- lmer(vocab_score ~ age + alternatives + (age | id), data = mock_n50) # failed to converge
+
+# center age
+mock_n50 <- mock_n50 %>% mutate(age_c = age - mean(age, na.rm = TRUE))
+# refit
+m1 <- lmer(vocab_score ~ age_c + (age_c | id), data = mock_n50) 
+m2 <- lmer(vocab_score ~ age_c + alternatives + (age_c | id), data = mock_n50) # failed to converge
+
+
+
+anova(m0, m1)
+summary(m1)
+
+m0 <- lmer(vocab_score ~ 1 + (1|id), data = mock_n100)
+m1 <- lmer(vocab_score ~ (1 + age | id), data = mock_n100)
+m2 <- lmer(vocab_score ~ alternatives + (1 + age | id), data = mock_n100) # failed to converge
+```
+
+
+
+
+```{r}
+# grammar growth - mixed linear reg
+
+# only random intercept for child for start
+m0 <- lmer(alternatives ~ 1 + (1|id), data = mock_n50)
+m1 <- lmer(alternatives ~ timepoint + (1|id), data = mock_n50)
+m2 <- lmer(alternatives ~ timepoint + vocab_score + (1|id), data = mock_n50)
+
+anova(m0, m1, m2)
+AIC(m0, m1, m2)
+BIC(m0, m1, m2)
+
+summary(m2)
+# 
+# large effect of timepoint
+# small effect of vocab
+```
+
