@@ -1,0 +1,42 @@
+---
+title: "Growth curves"
+author: "KM"
+date: "2025-12-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# import mock data
+mock_n50 <- read_csv2("mock_n50.csv")
+mock_n100 <- read_csv2("mock_n100.csv")
+
+# Variables:
+
+# vocab_score - overall vocab - total number of words child produces, range: 0 - 670
+# alternatives - overall gram - total score from alternative sentences, measures complexity of child's sentences
+
+# verb_person - child's score on inflection of verbs by persons, range: 0-6
+# verb_tense - child's score on inflection of verbs by tense, range: 0-3
+# verbs - because the two above have such narrow score ranges, KM created a verbs score: verb_person + verb_tense.
+
+# noun_form - child's score on inflection of nouns by cases, range 0-10
+# noun_context - also measuring inflection of nouns by cases, but in a different way: by producing a full sentence (with context) and asking parent whether child says sth like that; range 0 - 9
+# nouns - KM created a nouns score: noun_form + noun_context to mirror the approach for verbs; however, this may not have been the best idea, as the two measures essentially ask the same question.
+
+# adjective_adverb - child's score on the inflection of adjectives and adverbs (comparison, e.g. tall, taller, tallest), range 0-4
+
+# vocabulary subscales:
+# - 
+
+# for individual grammar items, see here:
+# https://docs.google.com/spreadsheets/d/1HODD1g8RqkIUMzp3elGEkq_JQN5sxmW-2r2eoaweMBc/edit?gid=0#gid=0
+
+# To run a CDI:WS in Polish (test run), go here: https://apps.multilada.pl/cdi/?form=ws-gram-p2&lang=pl&id=test100 
+
+
+```
+

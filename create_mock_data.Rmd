@@ -11,7 +11,6 @@ knitr::opts_chunk$set(echo = F, warning = F, message = F)
 # devtools::install_github("gkrajewski/Multilada", ref = "cdi_corrections_improvements")
 library(Multilada)
 library(tidyverse)
-library(mgcv) # for GAMs
 library(knitr)
 library(lubridate)
 ```
@@ -19,7 +18,7 @@ library(lubridate)
 # Data
 
 Data from:
-  1. (Parents of) Children recruited via preschools (`ws-gram-p2-pl`)
+1. (Parents of) Children recruited via preschools (`ws-gram-p2-pl`)
 2. (Parents of) Children recruited via CAT validation (`ws-gram-p2-pl`)
 
 ```{r data}
@@ -56,64 +55,121 @@ data %>% mutate(completed_cdi = if_else(is.na(end_date),"no","yes")) %>%
   summarise(number_of_children = n_distinct(id))
 ```
 
-Number of participanst per study:
+Number of participants per study:
 ```{r}
 data %>% group_by(source) %>% summarise(number_of_children = n_distinct(id))
 ```
 
 # Scoring
 
+```{r}
+# vocabulary subscales
+action_words <- cdi_count_oneCheckboxGroup(cdi_ws_gram, type = "word", category = "action_words")
+action_words <- action_words %>% rename(action_words = n) %>% select(id, action_words)
+
+connecting_words <- cdi_count_oneCheckboxGroup(cdi_ws_gram, type = "word", category = "connecting_words")
+connecting_words <- connecting_words %>% rename(connecting_words = n) %>% select(id, connecting_words)
+
+```
+
+
+
 ```{r items}
 items <- read_csv2("items.csv")
 ```
 
 Poza tu i teraz:
-  *not working*
 ```{r}
 deixis <- cdi_itemise_radio(data, "deixis", items)
 ```
 
-Odmiana-Formy:
-  There should be 14 rows per child.
+Inflection -- form:
 ```{r inflection}
-cdi_itemise_oneCheckboxGroup(data, "inflection", items) %>%
+# response format: yes/no (0/1) --> we'll take sum of 1s per kid
+cdi_itemise_oneCheckboxGroup(cdi_ws_gram, "inflection", items) %>%
   filter(category == "noun_form" |
-           category == "adjective_adverb") -> inflection_forms
+           category == "adjective_adverb") -> form
+
 
 #check number of rows per id
-inflection_forms %>% group_by(id) %>% summarise(n = n()) %>%
+form %>% group_by(id) %>% summarise(n = n()) %>%
   summarise(min(n), max(n)) #14
+
+gram_categories <- form %>% group_by(id, category) %>% summarize(n = n())
+gram_categories <- gram_categories %>% pivot_wider(id_cols = id, names_from = category, values_from = n)
+
 ```
 
-Konteksty:
-  There should be 9 rows per child.
+Inflection -- context:
 ```{r noun-context}
-cdi_itemise_radio(data, "inflection", items) %>%
+cdi_itemise_radio(cdi_ws_gram, "inflection", items) %>%
   filter(category == "noun_context") -> noun_context
 #check number of rows per id
 noun_context %>% group_by(id) %>% summarise(n = n()) %>%
   summarise(min(n), max(n)) #9
+
+noun_context <- noun_context %>% mutate(
+  score = case_when(answer == 1 ~ 0,
+                    .default = 1))
+
+noun_context <- noun_context %>% select(id, score) %>%
+  group_by(id) %>% summarize(noun_context = sum(score))
+
+noun_context %>%full_join(gram_categories) -> gram_categories
+
 ```
 
-Czas-odmiana:
+Inflection -- verb tense:
   There should be 3 rows per child.
 ```{r verb-tense}
-cdi_itemise_radio(data, "inflection", items) %>%
+cdi_itemise_radio(cdi_ws_gram, "inflection", items) %>%
   filter(category == "verb_tense") -> verb_tense
 #check number of rows per id
 verb_tense %>% group_by(id) %>% summarise(n = n()) %>%
   summarise(min(n), max(n)) #3
+
+verb_tense <- verb_tense %>% mutate(
+  score = case_when(answer == 1 ~ 0,
+                    .default = 1))
+
+verb_tense <- verb_tense %>% select(id, score) %>%
+  group_by(id) %>% summarize(verb_tense = sum(score))
+
+verb_tense %>%full_join(gram_categories) -> gram_categories
 ```
 
-Czas-osoby:
+Inflection -- verb person:
   There should be 6 rows per child.
 ```{r verb-person}
-cdi_itemise_radio(data, "inflection", items) %>%
+cdi_itemise_radio(cdi_ws_gram, "inflection", items) %>%
   filter(category == "verb_person") -> verb_person
 #check number of rows per id
 verb_person %>% group_by(id) %>% summarise(n = n()) %>%
   summarise(min(n), max(n)) #6
+
+verb_person <- verb_person %>% mutate(
+  score = case_when(answer == 1 ~ 0,
+                    .default = 1))
+
+verb_person <- verb_person %>% select(id, score) %>%
+  group_by(id) %>% summarize(verb_person = sum(score))
+
+verb_person %>%full_join(gram_categories) -> gram_categories
+
 ```
+
+```{r}
+# create sum scores - nouns (noun_form + noun_context)
+# and verbs (verb_person + verb_tense)
+gram_categories$nouns <- rowSums(select(gram_categories,starts_with("noun_")), na.rm = TRUE)
+gram_categories$verbs <- rowSums(select(gram_categories,starts_with("verb_")), na.rm = TRUE)
+```
+
+```{r}
+# clean
+gram_categories[is.na(gram_categories)] <- 0
+```
+
 
 ```{r}
 # create submissions
@@ -122,13 +178,27 @@ cdi_submissions(cdi_ws_gram) -> submissions
 # add age (in months)
 submissions$age <- age_months(submissions$birth_date, submissions$end_date)
 
-# create vocab scores
+```
+
+```{r}
+# create (total) vocab scores
 cdi_scores <- cdi_count_oneCheckboxGroup(cdi_ws_gram, "word")
 cdi_scores <- cdi_scores %>% rename(vocab_score = n)
 # add vocab scores to cdi_scores
 cdi_scores <- submissions %>% select(id, age) %>% left_join(cdi_scores)
+cdi_scores <- cdi_scores %>% select(id, age, vocab_score)
 
-# create grammar scores
+gram_categories %>%full_join(cdi_scores) -> cdi_scores
+```
+
+```{r}
+cdi_scores <- cdi_scores %>% filter(!(id == "77738317-gram-p2" | id == "730052942-gram-p2"))
+
+```
+
+
+```{r}
+# create (total) grammar scores
 # creating a complexity score made of
 # alternatives_simple_1 _2 and _3
 
@@ -157,15 +227,17 @@ alternatives$alternatives <- rowSums(
   select(alternatives, 
          starts_with("alternatives_")), na.rm = TRUE)
 
-# add vocab scores to cdi_scores
-cdi_scores <- alternatives %>% select(id, alternatives) %>% left_join(cdi_scores)
+# add alternatives scores to cdi_scores
+cdi_scores <- alternatives %>% select(id, alternatives) %>% full_join(cdi_scores)
+```
+
+```{r}
 
 # remove kids with 0 in vocab and alternatives scores
 cdi_scores <- cdi_scores %>% filter(!(vocab_score == 0 & alternatives == 0))
-# small clean
-cdi_scores <- cdi_scores %>% select(id, age, vocab_score, alternatives)
 
 ```
+
 
 ```{r}
 # create mock data mock_n50
@@ -176,6 +248,13 @@ A_T3 <- cdi_scores %>% filter(age >= 34, age <= 39)
 # define ceilings based on real data
 max_vocab <- max(cdi_scores$vocab_score, na.rm = TRUE)
 max_alt   <- max(cdi_scores$alternatives, na.rm = TRUE)
+max_verb_person <- max(cdi_scores$verb_person, na.rm = TRUE)
+max_verb_tense <- max(cdi_scores$verb_tense, na.rm = TRUE)
+max_verbs <- max(cdi_scores$verbs, na.rm = TRUE)
+max_nouns <- max(cdi_scores$nouns, na.rm = TRUE)
+max_noun_form <- max(cdi_scores$noun_form, na.rm = TRUE)
+max_noun_context <- max(cdi_scores$noun_context, na.rm = TRUE)
+max_adj <- max(cdi_scores$adjective_adverb, na.rm = TRUE)
 
 # use the real values to create T1
 set.seed(123)
@@ -189,87 +268,109 @@ T1 <- mock_ids %>%
     timepoint = "T1",
     age = sample(17:20, n(), replace = TRUE),
     vocab_score = sample(A_T1$vocab_score, n(), replace = TRUE),
-    alternatives = sample(A_T1$alternatives, n(), replace = TRUE)
+    alternatives = sample(A_T1$alternatives, n(), replace = TRUE),
+    verb_person = sample(A_T1$verb_person, n(), replace = TRUE),
+    verb_tense = sample(A_T1$verb_tense, n(), replace = TRUE),
+    verbs = sample(A_T1$verbs, n(), replace = TRUE),
+    adjective_adverb = sample(A_T1$adjective_adverb, n(), replace = TRUE),
+    noun_form = sample(A_T1$noun_form, n(), replace = TRUE),
+    noun_context = sample(A_T1$noun_context, n(), replace = TRUE),
+    nouns = sample(A_T1$nouns, n(), replace = TRUE)
   )
 
 # simulate T2 and T3 
-# create a simulating function
+
 simulate_next_tp <- function(prev_df,
                              real_data,
                              time_label,
                              age_range,
                              max_vocab,
                              max_alt,
+                             max_verb_person, 
+                             max_verb_tense, 
+                             max_verbs, 
+                             max_nouns, 
+                             max_noun_form, 
+                             max_noun_context, 
+                             max_adj,
                              noise_sd_vocab = 5,
-                             noise_sd_alt = 2) {
+                             noise_sd_alt = 2,
+                             noise_sd_other = 2) {
   
   n <- nrow(prev_df)
   
-  # -------------------------------------------------
-  # C. Probability of using real cross-sectional data
-  #    (increases as participant approaches ceiling)
-  # -------------------------------------------------
+  # ---- probability of using real cross-sectional values ----
   p_real_vocab <- plogis((prev_df$vocab_score - 0.6 * max_vocab) / 40)
   p_real_alt   <- plogis((prev_df$alternatives - 0.6 * max_alt) / 5)
-  
-  p_real <- pmax(
-    0.2,  # <-- baseline probability (CRITICAL)
-    p_real_vocab,
-    p_real_alt
-  )
-  
+  p_real <- pmax(0.2, p_real_vocab, p_real_alt)
   use_real <- runif(n) < p_real
   
-  # Sample from real cross-sectional distributions
-  top_vocab <- real_data$vocab_score[
-    real_data$vocab_score >= 0.9 * max_vocab
-  ]
-  
-  real_vocab <- if (length(top_vocab) > 0) {
-    ifelse(
-      runif(n) < 0.4,
-      sample(top_vocab, n, replace = TRUE),
-      sample(real_data$vocab_score, n, replace = TRUE)
-    )
-  } else {
-    # fallback: no ceiling values in this age band
-    sample(real_data$vocab_score, n, replace = TRUE)
+  # ---- helper to sample from top or full distribution ----
+  sample_ceiling_safe <- function(var, max_val) {
+    top_vals <- var[var >= 0.9 * max_val]
+    if(length(top_vals) > 0) {
+      ifelse(runif(n) < 0.4,
+             sample(top_vals, n, replace = TRUE),
+             sample(var, n, replace = TRUE))
+    } else {
+      sample(var, n, replace = TRUE)
+    }
   }
-  real_alt   <- sample(real_data$alternatives, n, replace = TRUE)
   
-  # -------------------------------------------------
-  # A. Ceiling-aware simulated growth
-  # -------------------------------------------------
-  growth_vocab_mean <- 20 * (1 - prev_df$vocab_score / max_vocab)
-  growth_vocab_mean <- pmax(growth_vocab_mean, 2)
+  # ---- real cross-sectional values ----
+  real_vocab <- sample_ceiling_safe(real_data$vocab_score, max_vocab)
+  real_alt   <- sample_ceiling_safe(real_data$alternatives, max_alt)
+  real_verb_person <- sample_ceiling_safe(real_data$verb_person, max_verb_person)
+  real_verb_tense  <- sample_ceiling_safe(real_data$verb_tense, max_verb_tense)
+  real_verbs       <- sample_ceiling_safe(real_data$verbs, max_verbs)
+  real_adj         <- sample_ceiling_safe(real_data$adjective_adverb, max_adj)
+  real_noun_form   <- sample_ceiling_safe(real_data$noun_form, max_noun_form)
+  real_noun_context<- sample_ceiling_safe(real_data$noun_context, max_noun_context)
+  real_nouns       <- sample_ceiling_safe(real_data$nouns, max_nouns)
   
-  sim_vocab <- round(
-    prev_df$vocab_score +
-      rnorm(n, mean = growth_vocab_mean, sd = noise_sd_vocab)
-  )
+  # ---- simulated growth ----
+  growth <- function(prev, max_val, base_mean = 2) {
+    mean_growth <- 0.1 * (max_val - prev)  # smaller growth closer to ceiling
+    mean_growth <- pmax(mean_growth, base_mean)
+    round(prev + rnorm(n, mean = mean_growth, sd = noise_sd_other))
+  }
   
-  growth_alt_mean <- 2 * (1 - prev_df$alternatives / max_alt)
-  growth_alt_mean <- pmax(growth_alt_mean, 0.3)
+  sim_vocab <- round(prev_df$vocab_score + rnorm(n, mean = 20 * (1 - prev_df$vocab_score / max_vocab), sd = noise_sd_vocab))
+  sim_alt   <- round(prev_df$alternatives + rnorm(n, mean = 2 * (1 - prev_df$alternatives / max_alt), sd = noise_sd_alt))
+  sim_verb_person <- growth(prev_df$verb_person, max_verb_person)
+  sim_verb_tense  <- growth(prev_df$verb_tense, max_verb_tense)
+  sim_verbs       <- growth(prev_df$verbs, max_verbs)
+  sim_adj         <- growth(prev_df$adjective_adverb, max_adj)
+  sim_noun_form   <- growth(prev_df$noun_form, max_noun_form)
+  sim_noun_context<- growth(prev_df$noun_context, max_noun_context)
+  sim_nouns       <- growth(prev_df$nouns, max_nouns)
   
-  sim_alt <- round(
-    prev_df$alternatives +
-      rnorm(n, mean = growth_alt_mean, sd = noise_sd_alt)
-  )
-  
-  # -------------------------------------------------
-  # B. Assemble output + monotonicity + bounds
-  # -------------------------------------------------
+  # ---- assemble output, choose real vs simulated, enforce bounds ----
   tibble(
     id = prev_df$id,
     timepoint = time_label,
     age = sample(age_range, n, replace = TRUE),
     vocab_score = ifelse(use_real, real_vocab, sim_vocab),
     alternatives = ifelse(use_real, real_alt, sim_alt),
+    verb_person = ifelse(use_real, real_verb_person, sim_verb_person),
+    verb_tense  = ifelse(use_real, real_verb_tense, sim_verb_tense),
+    verbs       = ifelse(use_real, real_verbs, sim_verbs),
+    adjective_adverb = ifelse(use_real, real_adj, sim_adj),
+    noun_form   = ifelse(use_real, real_noun_form, sim_noun_form),
+    noun_context= ifelse(use_real, real_noun_context, sim_noun_context),
+    nouns       = ifelse(use_real, real_nouns, sim_nouns),
     source = ifelse(use_real, "cross_sectional", "simulated")
   ) %>%
     mutate(
-      vocab_score = round(pmin(pmax(vocab_score, prev_df$vocab_score), max_vocab)),
-      alternatives = round(pmin(pmax(alternatives, prev_df$alternatives), max_alt))
+      vocab_score = pmin(pmax(vocab_score, prev_df$vocab_score), max_vocab),
+      alternatives = pmin(pmax(alternatives, prev_df$alternatives), max_alt),
+      verb_person = pmin(pmax(verb_person, prev_df$verb_person), max_verb_person),
+      verb_tense  = pmin(pmax(verb_tense, prev_df$verb_tense), max_verb_tense),
+      verbs       = pmin(pmax(verbs, prev_df$verbs), max_verbs),
+      adjective_adverb = pmin(pmax(adjective_adverb, prev_df$adjective_adverb), max_adj),
+      noun_form   = pmin(pmax(noun_form, prev_df$noun_form), max_noun_form),
+      noun_context= pmin(pmax(noun_context, prev_df$noun_context), max_noun_context),
+      nouns       = pmin(pmax(nouns, prev_df$nouns), max_nouns)
     )
 }
 
@@ -279,7 +380,14 @@ T2 <- simulate_next_tp(
   time_label = "T2",
   age_range = 23:26,
   max_vocab = max_vocab,
-  max_alt = max_alt
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj
 )
 
 T3 <- simulate_next_tp(
@@ -288,9 +396,15 @@ T3 <- simulate_next_tp(
   time_label = "T3",
   age_range = 36:39,
   max_vocab = max_vocab,
-  max_alt = max_alt
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj
 )
-
 
 mock_n50 <- bind_rows(T1, T2, T3) %>%
   arrange(id, timepoint)
@@ -299,7 +413,7 @@ mock_n50 <- bind_rows(T1, T2, T3) %>%
 
 
 ```{r}
-# create mock data mock_n100
+# mock_n100 dataset
 
 # use the real values to create T1
 set.seed(123)
@@ -313,19 +427,31 @@ T1 <- mock_ids %>%
     timepoint = "T1",
     age = sample(17:20, n(), replace = TRUE),
     vocab_score = sample(A_T1$vocab_score, n(), replace = TRUE),
-    alternatives = sample(A_T1$alternatives, n(), replace = TRUE)
+    alternatives = sample(A_T1$alternatives, n(), replace = TRUE),
+    verb_person = sample(A_T1$verb_person, n(), replace = TRUE),
+    verb_tense = sample(A_T1$verb_tense, n(), replace = TRUE),
+    verbs = sample(A_T1$verbs, n(), replace = TRUE),
+    adjective_adverb = sample(A_T1$adjective_adverb, n(), replace = TRUE),
+    noun_form = sample(A_T1$noun_form, n(), replace = TRUE),
+    noun_context = sample(A_T1$noun_context, n(), replace = TRUE),
+    nouns = sample(A_T1$nouns, n(), replace = TRUE)
   )
 
 # simulate T2 and T3 
-# create a simulating function
-
 T2 <- simulate_next_tp(
   prev_df = T1,
   real_data = A_T2,
   time_label = "T2",
   age_range = 23:26,
   max_vocab = max_vocab,
-  max_alt = max_alt
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj
 )
 
 T3 <- simulate_next_tp(
@@ -334,16 +460,25 @@ T3 <- simulate_next_tp(
   time_label = "T3",
   age_range = 36:39,
   max_vocab = max_vocab,
-  max_alt = max_alt
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj
 )
-
 
 mock_n100 <- bind_rows(T1, T2, T3) %>%
   arrange(id, timepoint)
 
+
 ```
 
+
 ```{r}
+# export data
 write_csv2(mock_n50, "mock_n50.csv")
 write_csv2(mock_n100, "mock_n100.csv")
 ```
