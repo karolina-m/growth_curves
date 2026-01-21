@@ -1,0 +1,494 @@
+---
+title: "Growth curves"
+author: "KM"
+date: "2025-12-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = F}
+library(lavaan)
+library(tidyr)
+library(dplyr)
+library(tidyverse)
+library(semPlot)
+```
+
+```{r, include = F}
+# import mock data
+mock_n50 <- read_csv2("growth_curves/mock_n50.csv")
+mock_n100 <- read_csv2("growth_curves/mock_n100.csv")
+
+# correct data structure:
+# timpoints and id should be factors
+mock_n50$id <- as.factor(mock_n50$id)
+mock_n50$timepoint <- as.factor(mock_n50$timepoint)
+
+mock_n100$id <- as.factor(mock_n100$id)
+mock_n100$timepoint <- as.factor(mock_n100$timepoint)
+```
+
+
+###SEM growth modelling
+```{r}
+# adding random slope for age (not possible for timepoint)
+# so we include random intercept for child AND random slope for age
+m0 <- lmer(alternatives ~ 1 + (age|id), data = mock_n50)
+m1 <- lmer(alternatives ~ age + (age | id), data = mock_n50) # failed to converge
+m2 <- lmer(alternatives ~ age + vocab_score + (age | id), data = mock_n50) # failed to converge
+
+# refit with centered age
+m0 <- lmer(alternatives ~ 1 + (age_c|id), data = mock_n50)
+m1 <- lmer(alternatives ~ age_c + (age_c | id), data = mock_n50) 
+m2 <- lmer(alternatives ~ age_c + vocab_score + (age_c | id), data = mock_n50) # boundary (singular) fit? to check?
+
+anova(m0, m1, m2)
+AIC(m0, m1, m2)
+summary(m2)
+```
+```{r}
+###trying with SEM package
+
+###pivot data wide
+wide_data50 <- mock_n50 %>%
+  pivot_wider(
+    id_cols = id,
+    names_from = timepoint,
+    values_from = c(vocab_score, alternatives)
+  )
+
+
+vocab_model <- '
+  i =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  s =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  i ~ 1
+  s ~ 1
+  
+  i ~~ i
+  s ~~ s
+'
+
+
+
+
+fit_vocab50 <- lavaan(vocab_model, data = wide_data50, missing = "ML") #fails
+###correlation between T1 and T2 is .96 and with just three timepoints and N50 there is not enough information to reliably estimate individual differences in growth rates
+
+
+###setting slope variation to 0
+
+vocab_model1 <- '
+  i =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  s =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  i ~ 1
+  s ~ 1
+  
+  i ~~ i
+  s ~~ 0*s
+'
+fit_vocab50s <- lavaan(vocab_model1, data = wide_data50, missing = "ML")  ###still fails
+
+###trying with n100
+wide_data100 <- mock_n100 %>%
+  pivot_wider(
+    id_cols = id,
+    names_from = timepoint,
+    values_from = c(vocab_score, alternatives)
+  )
+fit_vocab100 <- lavaan(vocab_model, data = wide_data100, missing = "ML") ###fails
+
+#with 0 slope variation
+
+fit_vocab100s <- lavaan(vocab_model1, data = wide_data, missing = "ML") ###fails
+
+
+###Try again with standardized
+
+wide_data50_z <- wide_data50 %>%
+  mutate(across(
+    c(vocab_score_T1, vocab_score_T2, vocab_score_T3, alternatives_T1, alternatives_T2, alternatives_T3),
+    scale
+  ))
+
+ 
+fit_vocab50z <- lavaan(vocab_model1, data = wide_data50_z, missing = "ML") ###still fails
+
+wide_data100_z <- wide_data100 %>%
+  mutate(across(
+    c(vocab_score_T1, vocab_score_T2, vocab_score_T3, alternatives_T1, alternatives_T2, alternatives_T3),
+    scale
+  ))
+
+fit_vocab100z <- lavaan(vocab_model1, data = wide_data100_z, missing = "ML") ###still fails
+
+###add resiudal variances
+vocab_modelr1 <- '
+  # latent intercept and slope
+  i =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  s =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  # latent means
+  i ~ 1
+  s ~ 1
+
+  # variances
+  i ~~ i
+  s ~~ 0*s
+
+  # residual variances (IMPORTANT)
+  vocab_score_T1 ~~ vocab_score_T1
+  vocab_score_T2 ~~ vocab_score_T2
+  vocab_score_T3 ~~ vocab_score_T3
+'
+fit_vocab100zrs <- lavaan(vocab_modelr1, data = wide_data100_z, missing = "ML")
+
+summary(
+  fit_vocab,
+  fit.measures = TRUE,
+  standardized = TRUE,
+  rsquare = TRUE
+)
+
+###Now try with unfixed slope
+vocab_modelr <- '
+  # latent intercept and slope
+  i =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  s =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  # latent means
+  i ~ 1
+  s ~ 1
+
+  # variances
+  i ~~ i
+  s ~~ s
+
+  # residual variances
+  vocab_score_T1 ~~ vocab_score_T1
+  vocab_score_T2 ~~ vocab_score_T2
+  vocab_score_T3 ~~ vocab_score_T3
+'
+fit_vocab100zr <- lavaan(vocab_modelr, data = wide_data100_z, missing = "ML") ###some estimated lv variances are negative
+
+###try with smaller sample
+fit_vocab50zr <- lavaan(vocab_modelr, data = wide_data50_z, missing = "ML") ###some estimated lv variances are negative
+
+###try unstandardized
+fit_vocab50r <- lavaan(vocab_modelr, data = wide_data50, missing = "ML") ###some estimated lv variances are negative
+
+
+###should be easier when we have more timepoints, also t1 and t2 have a 0.96 correlation right now is that realistic? More variance will help.
+
+```
+###grammar
+```{r}
+grammar_modelr <- '
+  # latent intercept and slope
+  i =~ 1*alternatives_T1 + 1*alternatives_T2 + 1*alternatives_T3
+  s =~ 0*alternatives_T1 + 1*alternatives_T2 + 2*alternatives_T3
+
+  # latent means
+  i ~ 1
+  s ~ 1
+
+  # variances
+  i ~~ i
+  s ~~ s
+
+  # residual variances
+  alternatives_T1 ~~ alternatives_T1
+  alternatives_T2 ~~ alternatives_T2
+  alternatives_T3 ~~ alternatives_T3
+'
+
+fit_grammar100z <- lavaan(grammar_modelr, data = wide_data100_z, missing = "ML")  ###works
+
+summary(
+  fit_grammar100z,
+  fit.measures = TRUE,
+  standardized = TRUE,
+  rsquare = TRUE
+)
+
+fit_grammar50z <- lavaan(grammar_modelr, data = wide_data50_z, missing = "ML") ###works
+
+fit_grammar100 <- lavaan(grammar_modelr, data = wide_data100, missing = "ML") ###some estimated ov variances are negative
+
+```
+```{r}
+
+```
+
+###bivariate
+
+```{r}
+
+biv_model <- '
+  ########################
+  # Vocabulary growth
+  ########################
+  iv =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  sv =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  ########################
+  # Grammar growth
+  ########################
+  ig =~ 1*alternatives_T1 + 1*alternatives_T2 + 1*alternatives_T3
+  sg =~ 0*alternatives_T1 + 1*alternatives_T2 + 2*alternatives_T3
+
+  ########################
+  # Latent means
+  ########################
+  iv ~ 1
+  sv ~ 1
+  ig ~ 1
+  sg ~ 1
+
+  ########################
+  # Latent variances
+  ########################
+  iv ~~ iv
+  sv ~~ 0*sv     # FIXED
+  ig ~~ ig
+  sg ~~ sg
+
+  ########################
+  # Correlations between processes
+  ########################
+  iv ~~ ig       # intercept–intercept
+  sv ~~ sg       # slope–slope
+  iv ~~ sg
+  ig ~~ sv
+
+  ########################
+  # Residual variances
+  ########################
+  vocab_score_T1 ~~ vocab_score_T1
+  vocab_score_T2 ~~ vocab_score_T2
+  vocab_score_T3 ~~ vocab_score_T3
+
+  alternatives_T1 ~~ alternatives_T1
+  alternatives_T2 ~~ alternatives_T2
+  alternatives_T3 ~~ alternatives_T3
+'
+
+fit_biv100 <- lavaan(
+  biv_model,
+  data = wide_data100_z,
+  missing = "ML"
+)  ###covariance is not positive
+
+###check for culprit
+lavInspect(fit_biv100, "cov.lv")
+
+###sv is fixed in model and therefore is not allowed to covary with other variables, so we need to adjust the model
+
+biv_model1 <- '
+  ########################
+  # Vocabulary growth
+  ########################
+  iv =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  sv =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  ########################
+  # Grammar growth
+  ########################
+  ig =~ 1*alternatives_T1 + 1*alternatives_T2 + 1*alternatives_T3
+  sg =~ 0*alternatives_T1 + 1*alternatives_T2 + 2*alternatives_T3
+
+  ########################
+  # Latent means
+  ########################
+  iv ~ 1
+  sv ~ 1
+  ig ~ 1
+  sg ~ 1
+
+  ########################
+  # Latent variances
+  ########################
+  iv ~~ iv
+  sv ~~ 0*sv     # FIXED
+  ig ~~ ig
+  sg ~~ sg
+
+  ########################
+  # Correlations between processes
+  ########################
+  iv ~~ ig       # intercept–intercept
+  iv ~~ sg
+ # sv ~~ sg       slope–slope, sv is fixed to 0 therefore not allowed here
+
+  # ig ~~ sv sv is fixed to 0 therefore not allowed here
+
+  ########################
+  # Residual variances
+  ########################
+  vocab_score_T1 ~~ vocab_score_T1
+  vocab_score_T2 ~~ vocab_score_T2
+  vocab_score_T3 ~~ vocab_score_T3
+
+  alternatives_T1 ~~ alternatives_T1
+  alternatives_T2 ~~ alternatives_T2
+  alternatives_T3 ~~ alternatives_T3
+'
+
+fit_biv100 <- lavaan(
+  biv_model1,
+  data = wide_data100_z,
+  missing = "ML"
+) ###worked
+
+summary(
+  fit_biv100,
+  fit.measures = TRUE,
+  standardized = TRUE,
+  rsquare = TRUE
+)  ###not suberb fit, and also not a lot of interesting information here, more timepoints would be good so vocab slope can vary
+
+semPaths(
+  fit_biv100,
+  what = "std",
+  whatLabels = "std",
+  style = "lisrel",
+  layout = "tree",
+  rotation = 2,
+
+  residuals = FALSE,
+  intercepts = FALSE,
+  thresholds = FALSE,
+
+  nCharNodes = 0,
+  sizeMan = 6,
+  sizeLat = 8,
+  edge.label.cex = 0.9,
+
+  fade = FALSE,
+  fixedStyle = "gray",
+  freeStyle = "black"
+)
+
+```
+
+```{r}
+###try with unfixed slope
+
+biv_model_unfixed <- '
+  ########################
+  # Vocabulary growth
+  ########################
+  iv =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  sv =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  ########################
+  # Grammar growth
+  ########################
+  ig =~ 1*alternatives_T1 + 1*alternatives_T2 + 1*alternatives_T3
+  sg =~ 0*alternatives_T1 + 1*alternatives_T2 + 2*alternatives_T3
+
+  ########################
+  # Latent means
+  ########################
+  iv ~ 1
+  sv ~ 1
+  ig ~ 1
+  sg ~ 1
+
+  ########################
+  # Latent variances
+  ########################
+  iv ~~ iv
+  sv ~~ sv
+  ig ~~ ig
+  sg ~~ sg
+
+  ########################
+  # Latent covariances
+  ########################
+  iv ~~ ig
+  sv ~~ sg
+  iv ~~ sv
+  ig ~~ sg
+
+  ########################
+  # Residual variances
+  ########################
+  vocab_score_T1 ~~ vocab_score_T1
+  vocab_score_T2 ~~ vocab_score_T2
+  vocab_score_T3 ~~ vocab_score_T3
+
+  alternatives_T1 ~~ alternatives_T1
+  alternatives_T2 ~~ alternatives_T2
+  alternatives_T3 ~~ alternatives_T3
+'
+
+fit_biv100 <- lavaan(
+  biv_model_unfixed,
+  data = wide_data100_z,
+  missing = "ML"
+)  ### some estimated ov variances are negative
+
+
+#try with residuals constraint to be equal across time points but unfixed slope
+
+biv_model_slope_var <- '
+  # Latent factors
+  iv =~ 1*vocab_score_T1 + 1*vocab_score_T2 + 1*vocab_score_T3
+  sv =~ 0*vocab_score_T1 + 1*vocab_score_T2 + 2*vocab_score_T3
+
+  ig =~ 1*alternatives_T1 + 1*alternatives_T2 + 1*alternatives_T3
+  sg =~ 0*alternatives_T1 + 1*alternatives_T2 + 2*alternatives_T3
+
+  # Means
+  iv ~ 1
+  sv ~ 1
+  ig ~ 1
+  sg ~ 1
+
+  # Latent variances
+  iv ~~ iv
+  sv ~~ sv          # FREE slope variance
+  ig ~~ ig
+  sg ~~ sg
+  iv ~~ sv          # intercept-slope covariance
+  ig ~~ sg          # intercept-slope covariance
+  iv ~~ ig
+  sv ~~ sg
+
+  # Residual variances (constrained to be equal across time points)
+  vocab_score_T1 ~~ r*vocab_score_T1
+  vocab_score_T2 ~~ r*vocab_score_T2
+  vocab_score_T3 ~~ r*vocab_score_T3
+
+  alternatives_T1 ~~ a*alternatives_T1
+  alternatives_T2 ~~ a*alternatives_T2
+  alternatives_T3 ~~ a*alternatives_T3
+'
+
+fit_modelslope <- lavaan(
+  biv_model_slope_var,
+  data = wide_data100_z,
+  missing = "ML"
+) ###works
+
+summary(
+  fit_modelslope,
+  fit.measures = TRUE,
+  standardized = TRUE,
+  rsquare = TRUE
+)
+###worse fit, but also theoretically unsound we probably would expect residuals to grow over time
+
+
+
+```
+
+```{r}
+git status
+```
+
