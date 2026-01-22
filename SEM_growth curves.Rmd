@@ -15,12 +15,13 @@ library(tidyr)
 library(dplyr)
 library(tidyverse)
 library(semPlot)
+library(lme4)
 ```
 
 ```{r, include = F}
 # import mock data
-mock_n50 <- read_csv2("growth_curves/mock_n50.csv")
-mock_n100 <- read_csv2("growth_curves/mock_n100.csv")
+mock_n50 <- read_csv2("mock_n50.csv")
+mock_n100 <- read_csv2("mock_n100.csv")
 
 # correct data structure:
 # timpoints and id should be factors
@@ -41,6 +42,7 @@ m1 <- lmer(alternatives ~ age + (age | id), data = mock_n50) # failed to converg
 m2 <- lmer(alternatives ~ age + vocab_score + (age | id), data = mock_n50) # failed to converge
 
 # refit with centered age
+mock_n50 <- mock_n50 %>% mutate(age_c = age - mean(age, na.rm = TRUE))
 m0 <- lmer(alternatives ~ 1 + (age_c|id), data = mock_n50)
 m1 <- lmer(alternatives ~ age_c + (age_c | id), data = mock_n50) 
 m2 <- lmer(alternatives ~ age_c + vocab_score + (age_c | id), data = mock_n50) # boundary (singular) fit? to check?
@@ -104,7 +106,7 @@ fit_vocab100 <- lavaan(vocab_model, data = wide_data100, missing = "ML") ###fail
 
 #with 0 slope variation
 
-fit_vocab100s <- lavaan(vocab_model1, data = wide_data, missing = "ML") ###fails
+fit_vocab100s <- lavaan(vocab_model1, data = wide_data100, missing = "ML") ###fails
 
 
 ###Try again with standardized
@@ -148,7 +150,7 @@ vocab_modelr1 <- '
 fit_vocab100zrs <- lavaan(vocab_modelr1, data = wide_data100_z, missing = "ML")
 
 summary(
-  fit_vocab,
+  fit_vocab100zrs,
   fit.measures = TRUE,
   standardized = TRUE,
   rsquare = TRUE
@@ -220,9 +222,7 @@ fit_grammar50z <- lavaan(grammar_modelr, data = wide_data50_z, missing = "ML") #
 fit_grammar100 <- lavaan(grammar_modelr, data = wide_data100, missing = "ML") ###some estimated ov variances are negative
 
 ```
-```{r}
 
-```
 
 ###bivariate
 
@@ -489,6 +489,6 @@ summary(
 ```
 
 ```{r}
-git status
+
 ```
 
