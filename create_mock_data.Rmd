@@ -226,7 +226,8 @@ cdi_scores <- cdi_scores %>% filter(!(vocab_score == 0 & alternatives == 0))
 # create mock data mock_n50
 A_T1 <- cdi_scores %>% filter(age >= 17, age <= 20)
 A_T2 <- cdi_scores %>% filter(age >= 23, age <= 26)
-A_T3 <- cdi_scores %>% filter(age >= 34, age <= 39)
+A_T3 <- cdi_scores %>% filter(age >= 29, age <= 32)
+A_T4 <- cdi_scores %>% filter(age >= 34, age <= 39)
 
 # define ceilings based on real data
 max_vocab <- max(cdi_scores$vocab_score, na.rm = TRUE)
@@ -284,21 +285,36 @@ simulate_next_tp <- function(prev_df,
                              max_connecting_words,
                              noise_sd_vocab = 5,
                              noise_sd_alt = 2,
-                             noise_sd_other = 2) {
+                             noise_sd_other = 2,
+                             growth_boost = 1.0) {
+  # growth_boost: scalar >= 1 that amplifies simulated growth means and
+  # biases real-data sampling toward the upper half of the distribution.
+  # Use 1.0 for T2, ~1.5 for T3, ~2.5 for T4 to push scores upward
+  # across later timepoints.
   
   n <- nrow(prev_df)
   
   # ---- probability of using real cross-sectional values ----
+  # Reduce p_real at later timepoints so simulated (upward) growth
+  # drives more observations instead of being replaced by real data
+  # that still has many low scorers.
   p_real_vocab <- plogis((prev_df$vocab_score - 0.6 * max_vocab) / 40)
   p_real_alt   <- plogis((prev_df$alternatives - 0.6 * max_alt) / 5)
-  p_real <- pmax(0.2, p_real_vocab, p_real_alt)
+  p_real_base  <- pmax(0.2, p_real_vocab, p_real_alt)
+  # At higher growth_boost, trust simulated growth more
+  p_real <- p_real_base / growth_boost
   use_real <- runif(n) < p_real
   
-  # ---- helper to sample from top or full distribution ----
+  # ---- helper to sample from upper portion of distribution ----
+  # upper_bias (0–1): fraction of the range that defines "upper half";
+  # higher growth_boost raises this threshold so real samples skew higher.
   sample_ceiling_safe <- function(var, max_val) {
-    top_vals <- var[var >= 0.9 * max_val]
+    upper_threshold <- max_val * pmin(0.5 + 0.15 * (growth_boost - 1), 0.85)
+    top_vals <- var[var >= upper_threshold]
     if(length(top_vals) > 0) {
-      ifelse(runif(n) < 0.4,
+      # Increase probability of drawing from upper portion with growth_boost
+      p_top <- pmin(0.4 * growth_boost, 0.85)
+      ifelse(runif(n) < p_top,
              sample(top_vals, n, replace = TRUE),
              sample(var, n, replace = TRUE))
     } else {
@@ -320,14 +336,20 @@ simulate_next_tp <- function(prev_df,
   real_connecting_words <- sample_ceiling_safe(real_data$connecting_words, max_connecting_words)
   
   # ---- simulated growth ----
+  # growth_boost amplifies the mean growth so later timepoints show
+  # stronger upward movement across all measures.
   growth <- function(prev, max_val, base_mean = 2) {
-    mean_growth <- 0.1 * (max_val - prev)  # smaller growth closer to ceiling
-    mean_growth <- pmax(mean_growth, base_mean)
+    mean_growth <- growth_boost * 0.2 * (max_val - prev)  # boosted growth rate
+    mean_growth <- pmax(mean_growth, base_mean * growth_boost)
     round(prev + rnorm(n, mean = mean_growth, sd = noise_sd_other))
   }
   
-  sim_vocab <- round(prev_df$vocab_score + rnorm(n, mean = 20 * (1 - prev_df$vocab_score / max_vocab), sd = noise_sd_vocab))
-  sim_alt   <- round(prev_df$alternatives + rnorm(n, mean = 2 * (1 - prev_df$alternatives / max_alt), sd = noise_sd_alt))
+  sim_vocab <- round(prev_df$vocab_score + rnorm(n,
+    mean = growth_boost * 40 * (1 - prev_df$vocab_score / max_vocab),
+    sd = noise_sd_vocab))
+  sim_alt   <- round(prev_df$alternatives + rnorm(n,
+    mean = growth_boost * 4 * (1 - prev_df$alternatives / max_alt),
+    sd = noise_sd_alt))
   sim_verb_person <- growth(prev_df$verb_person, max_verb_person)
   sim_verb_tense  <- growth(prev_df$verb_tense, max_verb_tense)
   sim_verbs       <- growth(prev_df$verbs, max_verbs)
@@ -386,14 +408,15 @@ T2 <- simulate_next_tp(
   max_noun_context= max_noun_context,
   max_adj         = max_adj,
   max_action_words = max_action_words,
-  max_connecting_words = max_connecting_words
+  max_connecting_words = max_connecting_words,
+  growth_boost = 1.0
 )
 
 T3 <- simulate_next_tp(
   prev_df = T2,
   real_data = A_T3,
   time_label = "T3",
-  age_range = 36:39,
+  age_range = 29:32,
   max_vocab = max_vocab,
   max_alt = max_alt,
   max_verb_person = max_verb_person,
@@ -404,10 +427,30 @@ T3 <- simulate_next_tp(
   max_noun_context= max_noun_context,
   max_adj         = max_adj,
   max_action_words = max_action_words,
-  max_connecting_words = max_connecting_words
+  max_connecting_words = max_connecting_words,
+  growth_boost = 1.5
 )
 
-mock_n50 <- bind_rows(T1, T2, T3) %>%
+T4 <- simulate_next_tp(
+  prev_df = T3,
+  real_data = A_T4,
+  time_label = "T4",
+  age_range = 34:39,
+  max_vocab = max_vocab,
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words,
+  growth_boost = 2.5
+)
+
+mock_n50 <- bind_rows(T1, T2, T3, T4) %>%
   arrange(id, timepoint)
 
 ```
@@ -455,14 +498,15 @@ T2 <- simulate_next_tp(
   max_noun_context= max_noun_context,
   max_adj         = max_adj,
   max_action_words = max_action_words,
-  max_connecting_words = max_connecting_words
+  max_connecting_words = max_connecting_words,
+  growth_boost = 1.0
 )
 
 T3 <- simulate_next_tp(
   prev_df = T2,
   real_data = A_T3,
   time_label = "T3",
-  age_range = 36:39,
+  age_range = 29:32,
   max_vocab = max_vocab,
   max_alt = max_alt,
   max_verb_person = max_verb_person,
@@ -473,11 +517,44 @@ T3 <- simulate_next_tp(
   max_noun_context= max_noun_context,
   max_adj         = max_adj,
   max_action_words = max_action_words,
-  max_connecting_words = max_connecting_words
+  max_connecting_words = max_connecting_words,
+  growth_boost = 1.5
 )
 
-mock_n100 <- bind_rows(T1, T2, T3) %>%
+T4 <- simulate_next_tp(
+  prev_df = T3,
+  real_data = A_T4,
+  time_label = "T4",
+  age_range = 34:39,
+  max_vocab = max_vocab,
+  max_alt = max_alt,
+  max_verb_person = max_verb_person,
+  max_verb_tense  = max_verb_tense,
+  max_verbs       = max_verbs,
+  max_nouns       = max_nouns,
+  max_noun_form   = max_noun_form,
+  max_noun_context= max_noun_context,
+  max_adj         = max_adj,
+  max_action_words = max_action_words,
+  max_connecting_words = max_connecting_words,
+  growth_boost = 2.5
+)
+
+mock_n100 <- bind_rows(T1, T2, T3, T4) %>%
   arrange(id, timepoint)
+```
+
+```{r}
+#all T1 timepoints are real, mark them
+mock_n100 <- mock_n100 %>% mutate(source = case_when(
+  timepoint == "T1" ~ "cross-sectional",
+  .default = source
+))
+
+mock_n50 <- mock_n50 %>% mutate(source = case_when(
+  timepoint == "T1" ~ "cross-sectional",
+  .default = source
+))
 ```
 
 ```{r}
