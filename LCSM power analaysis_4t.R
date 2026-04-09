@@ -16,47 +16,53 @@ library(tidyverse)
 
 population_model <- '
   # ---- Measurement model ----
-  vt1 =~ 1*log_vocab_T1_z;  vt2 =~ 1*log_vocab_T2_z;  vt3 =~ 1*log_vocab_T3_z
-  gt1 =~ 1*gram_T1_z;       gt2 =~ 1*gram_T2_z;        gt3 =~ 1*gram_T3_z
+  vt1 =~ 1*log_vocab_T1_z;  vt2 =~ 1*log_vocab_T2_z;  vt3 =~ 1*log_vocab_T3_z;
+  vt4 =~ 1*log_vocab_T4_z
+  gt1 =~ 1*gram_T1_z;       gt2 =~ 1*gram_T2_z;        gt3 =~ 1*gram_T3_z;
+  gt4 =~ 1*gram_T4_z
   log_vocab_T1_z ~~ 0*log_vocab_T1_z
   log_vocab_T2_z ~~ 0*log_vocab_T2_z
   log_vocab_T3_z ~~ 0*log_vocab_T3_z
+  log_vocab_T4_z ~~ 0*log_vocab_T4_z
   gram_T1_z ~~ 0*gram_T1_z
   gram_T2_z ~~ 0*gram_T2_z
   gram_T3_z ~~ 0*gram_T3_z
+  gram_T4_z ~~ 0*gram_T4_z
 
   # ---- Latent change scores ----
-  vt2 ~ 1*vt1;  vt3 ~ 1*vt2
-  gt2 ~ 1*gt1;  gt3 ~ 1*gt2
-  dv2 =~ 1*vt2; dv3 =~ 1*vt3
-  dg2 =~ 1*gt2; dg3 =~ 1*gt3
+  vt2 ~ 1*vt1;  vt3 ~ 1*vt2; vt4 ~ 1*vt3
+  gt2 ~ 1*gt1;  gt3 ~ 1*gt2; gt4 ~ 1*gt3
+  dv2 =~ 1*vt2; dv3 =~ 1*vt3; dv4 =~ 1*vt4
+  dg2 =~ 1*gt2; dg3 =~ 1*gt3; dg4 =~ 1*gt4
 
   # ---- Self-feedback (from N=100 model) ----
-  dv2 ~ -0.388*vt1;  dv3 ~ -0.388*vt2
-  dg2 ~ -0.156*gt1;  dg3 ~ -0.156*gt2
+  dv2 ~ -0.388*vt1;  dv3 ~ -0.388*vt2; dv4 ~ -0.388*vt3
+  dg2 ~ -0.156*gt1;  dg3 ~ -0.156*gt2; dg4 ~ -0.156*gt3
+  
 
   # ---- Coupling: set to target effect size ----
-  dv2 ~ 0.20*gt1;  dv3 ~ 0.20*gt2   # gamma_gv = 0.20
-  dg2 ~ 0.20*vt1;  dg3 ~ 0.20*vt2   # gamma_vg = 0.20
+  dv2 ~ 0.20*gt1;  dv3 ~ 0.20*gt2; dv4 ~ 0.20*gt3 # gamma_gv = 0.20
+  dg2 ~ 0.20*vt1;  dg3 ~ 0.20*vt2; dg4 ~ 0.20*vt3   # gamma_vg = 0.20
 
   # ---- Variances (from N=100 model) ----
   vt1 ~~ 0.990*vt1;  gt1 ~~ 0.990*gt1
-  dv2 ~~ 0.161*dv2;  dv3 ~~ 0.559*dv3
-  dg2 ~~ 1.485*dg2;  dg3 ~~ 1.192*dg3
-  vt2 ~~ 0*vt2;  vt3 ~~ 0*vt3
-  gt2 ~~ 0*gt2;  gt3 ~~ 0*gt3
+  dv2 ~~ 0.161*dv2;  dv3 ~~ 0.559*dv3; dv4 ~~ 0.073*dv4
+  dg2 ~~ 1.485*dg2;  dg3 ~~ 1.192*dg3; dg4 ~~ 0.137*dg4
+  vt2 ~~ 0*vt2;  vt3 ~~ 0*vt3; vt4 ~~ 0*vt4
+  gt2 ~~ 0*gt2;  gt3 ~~ 0*gt3; gt4 ~~ 0*gt4
 
   # ---- Covariances (from N=100 model) ----
   vt1 ~~ 0.072*gt1
   dv2 ~~ 0.071*dg2
   dv3 ~~ 0.272*dg3
+  dv4 ~~ 0.028*dg4
 
   # ---- Means (from N=100 model) ----
   vt1 ~ 0*1;   gt1 ~ 0*1
-  dv2 ~ 0.447*1;  dv3 ~ 0.750*1
-  dg2 ~ 0.758*1;  dg3 ~ 0.839*1
-  log_vocab_T1_z ~ 0*1;  log_vocab_T2_z ~ 0*1;  log_vocab_T3_z ~ 0*1
-  gram_T1_z ~ 0*1;       gram_T2_z ~ 0*1;        gram_T3_z ~ 0*1
+  dv2 ~ 0.447*1;  dv3 ~ 0.750*1; dv4 ~ 0.575*1
+  dg2 ~ 0.758*1;  dg3 ~ 0.839*1; dg4 ~ 0.634*1
+  log_vocab_T1_z ~ 0*1;  log_vocab_T2_z ~ 0*1;  log_vocab_T3_z ~ 0*1; log_vocab_T4_z ~ 0*1
+  gram_T1_z ~ 0*1;       gram_T2_z ~ 0*1;        gram_T3_z ~ 0*1; gram_T4_z ~ 0*1
 '
 
 # =============================================================================
@@ -66,41 +72,45 @@ population_model <- '
 # Identical to the model in the main script.
 
 analysis_model <- '
-  vt1 =~ 1*log_vocab_T1_z;  vt2 =~ 1*log_vocab_T2_z;  vt3 =~ 1*log_vocab_T3_z
-  gt1 =~ 1*gram_T1_z;       gt2 =~ 1*gram_T2_z;        gt3 =~ 1*gram_T3_z
+  vt1 =~ 1*log_vocab_T1_z;  vt2 =~ 1*log_vocab_T2_z;  vt3 =~ 1*log_vocab_T3_z; vt4 =~ 1*log_vocab_T4_z
+  gt1 =~ 1*gram_T1_z;       gt2 =~ 1*gram_T2_z;        gt3 =~ 1*gram_T3_z; gt4 =~ 1*gram_T4_z
   log_vocab_T1_z ~~ 0*log_vocab_T1_z
   log_vocab_T2_z ~~ 0*log_vocab_T2_z
   log_vocab_T3_z ~~ 0*log_vocab_T3_z
+  log_vocab_T4_z ~~ 0*log_vocab_T4_z
   gram_T1_z ~~ 0*gram_T1_z
   gram_T2_z ~~ 0*gram_T2_z
   gram_T3_z ~~ 0*gram_T3_z
+  gram_T4_z ~~ 0*gram_T4_z
 
-  vt2 ~ 1*vt1;  vt3 ~ 1*vt2
-  gt2 ~ 1*gt1;  gt3 ~ 1*gt2
-  dv2 =~ 1*vt2; dv3 =~ 1*vt3
-  dg2 =~ 1*gt2; dg3 =~ 1*gt3
+  vt2 ~ 1*vt1;  vt3 ~ 1*vt2; vt4 ~ 1*vt3
+  gt2 ~ 1*gt1;  gt3 ~ 1*gt2; gt4 ~ 1*gt3
+  dv2 =~ 1*vt2; dv3 =~ 1*vt3; dv4 =~ 1*vt4
+  dg2 =~ 1*gt2; dg3 =~ 1*gt3; dg4 =~ 1*gt4
 
-  dv2 ~ beta_v*vt1;  dv3 ~ beta_v*vt2
-  dg2 ~ beta_g*gt1;  dg3 ~ beta_g*gt2
+  dv2 ~ beta_v*vt1;  dv3 ~ beta_v*vt2; dv4 ~ beta_v*vt3
+  dg2 ~ beta_g*gt1;  dg3 ~ beta_g*gt2; dg4 ~ beta_g*gt3
 
-  dv2 ~ gamma_gv*gt1;  dv3 ~ gamma_gv*gt2
-  dg2 ~ gamma_vg*vt1;  dg3 ~ gamma_vg*vt2
+  dv2 ~ gamma_gv*gt1;  dv3 ~ gamma_gv*gt2; dv4 ~ gamma_gv*gt3
+  dg2 ~ gamma_vg*vt1;  dg3 ~ gamma_vg*vt2; dg4 ~ gamma_vg*vt3
 
   vt1 ~~ vt1;  gt1 ~~ gt1
-  dv2 ~~ dv2;  dv3 ~~ dv3
-  dg2 ~~ dg2;  dg3 ~~ dg3
-  vt2 ~~ 0*vt2;  vt3 ~~ 0*vt3
-  gt2 ~~ 0*gt2;  gt3 ~~ 0*gt3
+  dv2 ~~ dv2;  dv3 ~~ dv3; dv4 ~~ dv4
+  dg2 ~~ dg2;  dg3 ~~ dg3; dg4 ~~ dg4
+  vt2 ~~ 0*vt2;  vt3 ~~ 0*vt3; vt4 ~~ 0*vt4
+  gt2 ~~ 0*gt2;  gt3 ~~ 0*gt3; gt4 ~~ 0*gt4
 
   vt1 ~~ gt1
   dv2 ~~ dg2
   dv3 ~~ dg3
+  dv4 ~~ dg4
 
   vt1 ~ 1;  gt1 ~ 1
   dv2 ~ 1;  dv3 ~ 1
   dg2 ~ 1;  dg3 ~ 1
-  log_vocab_T1_z ~ 0*1;  log_vocab_T2_z ~ 0*1;  log_vocab_T3_z ~ 0*1
-  gram_T1_z ~ 0*1;       gram_T2_z ~ 0*1;        gram_T3_z ~ 0*1
+  dv4 ~ 1; dg4 ~ 1
+  log_vocab_T1_z ~ 0*1;  log_vocab_T2_z ~ 0*1;  log_vocab_T3_z ~ 0*1; log_vocab_T4_z ~ 0*1
+  gram_T1_z ~ 0*1;       gram_T2_z ~ 0*1;        gram_T3_z ~ 0*1; gram_T4_z ~ 0*1
 '
 
 # =============================================================================
