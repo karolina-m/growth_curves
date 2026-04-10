@@ -187,7 +187,7 @@ run_simulation <- function(n, n_reps = 1000, seed = 42) {
 # This will take a few minutes — 1000 reps x 5 sample sizes = 5000 model fits
 # Reduce n_reps to 500 for a quicker first run, then increase to 1000
 
-sample_sizes <- c(100, 150, 200, 250, 300)
+sample_sizes <- c(50, 75, 100, 150, 200, 250, 300)
 
 cat("Running power simulation... this may take a few minutes.\n")
 
